@@ -1,0 +1,128 @@
+# Everything locally: docker compose up --build
+# Public entry point: http://localhost:8080 (nginx gateway)
+
+x-service-environment: &service-environment
+  NODE_ENV: ${NODE_ENV:-development}
+  JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789}
+  COOKIE_SECURE: ${COOKIE_SECURE:-false}
+  ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tradedesk
+      POSTGRES_PASSWORD: tradedesk
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradedesk -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  identity-service:
+    build:
+      context: .
+      args:
+        APP: identity-service
+    environment:
+      <<: *service-environment
+      IDENTITY_PORT: 3001
+      IDENTITY_DATABASE_URL: postgres://tradedesk:tradedesk@postgres:5432/identity
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-604800}
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/api/identity/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  wallet-service:
+    build:
+      context: .
+      args:
+        APP: wallet-service
+    environment:
+      <<: *service-environment
+      WALLET_PORT: 3002
+      WALLET_DATABASE_URL: postgres://tradedesk:tradedesk@postgres:5432/wallet
+      CRYPTO_WEBHOOK_SECRET: ${CRYPTO_WEBHOOK_SECRET:-dev-only-webhook-secret}
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/api/wallet/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  market-service:
+    build:
+      context: .
+      args:
+        APP: market-service
+    environment:
+      <<: *service-environment
+      MARKET_PORT: 3003
+      MARKET_DATABASE_URL: postgres://tradedesk:tradedesk@postgres:5432/market
+      PRICE_SIMULATOR_ENABLED: ${PRICE_SIMULATOR_ENABLED:-true}
+      PRICE_SIMULATOR_INTERVAL_MS: ${PRICE_SIMULATOR_INTERVAL_MS:-1000}
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3003/api/market/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      wallet-service:
+        condition: service_healthy
+      market-service:
+        condition: service_healthy
+
+  # Optional. Run once after the stack is up:  docker compose --profile seed run --rm seed
+  seed:
+    profiles: ["seed"]
+    build:
+      context: .
+      target: build
+    command: ["npm", "run", "seed"]
+    environment:
+      IDENTITY_DATABASE_URL: postgres://tradedesk:tradedesk@postgres:5432/identity
+      WALLET_DATABASE_URL: postgres://tradedesk:tradedesk@postgres:5432/wallet
+      MARKET_DATABASE_URL: postgres://tradedesk:tradedesk@postgres:5432/market
+    depends_on:
+      identity-service:
+        condition: service_healthy
+      wallet-service:
+        condition: service_healthy
+      market-service:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "jest"],
+    "baseUrl": ".",
+    "paths": { "@tradedesk/common": ["libs/common/src/index.ts"] }
+  },
+  "include": ["apps/**/*.ts", "libs/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["**/dist", "node_modules"]
+}

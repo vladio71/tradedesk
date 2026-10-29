@@ -1,0 +1,174 @@
+### TradeDesk requests for the VS Code "REST Client" extension.
+### Everything goes through the nginx gateway (docker compose up --build).
+### REST Client keeps cookies between requests, so after login the access token is sent automatically.
+###
+### CSRF: after login, copy the value of the csrf_token cookie (see the Set-Cookie header of the login response)
+### into @csrf below. The API compares it with the cookie and wants it in the X-CSRF-Token header.
+
+@base = http://localhost:8080
+@csrf = PASTE_CSRF_TOKEN_HERE
+@email = alice@tradedesk.dev
+@password = Password123!
+
+# Ids from the seed (npm run seed). Bob's user id:
+@bobId = 00000000-0000-4000-8000-000000000003
+
+############################################################ identity
+
+### Register
+POST {{base}}/api/identity/auth/register
+Content-Type: application/json
+
+{ "email": "new.user@example.com", "password": "password123", "displayName": "New User" }
+
+### Login (sets access_token, refresh_token and csrf_token cookies)
+# @name login
+POST {{base}}/api/identity/auth/login
+Content-Type: application/json
+
+{ "email": "{{email}}", "password": "{{password}}" }
+
+### Me
+GET {{base}}/api/identity/auth/me
+
+### Refresh (rotates the refresh token)
+POST {{base}}/api/identity/auth/refresh
+X-CSRF-Token: {{csrf}}
+
+### Logout
+POST {{base}}/api/identity/auth/logout
+X-CSRF-Token: {{csrf}}
+
+### Update profile
+PATCH {{base}}/api/identity/users/me
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "displayName": "Alice Cooper" }
+
+### Change password
+POST {{base}}/api/identity/users/me/password
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "currentPassword": "Password123!", "newPassword": "Password123!" }
+
+### List users (admin only: log in as admin@tradedesk.dev / Admin12345!)
+GET {{base}}/api/identity/users?q=ali&role=user&page=1&pageSize=10
+
+############################################################ wallet
+
+### My wallet
+GET {{base}}/api/wallet/wallets/me
+
+### Ledger with filters
+GET {{base}}/api/wallet/wallets/me/ledger?kind=deposit&from=2026-01-01T00:00:00Z&page=1&pageSize=20
+
+### Request a deposit (repeat it: same Idempotency-Key returns the same deposit)
+# @name deposit
+POST {{base}}/api/wallet/deposits
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+Idempotency-Key: deposit-demo-0001
+
+{ "asset": "BTC", "amount": "0.01" }
+
+### My deposits
+GET {{base}}/api/wallet/deposits
+
+### One deposit
+GET {{base}}/api/wallet/deposits/{{deposit.response.body.id}}
+
+### Dev only: let the fake provider confirm the deposit
+POST {{base}}/api/wallet/dev/simulate-deposit
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "depositId": "{{deposit.response.body.id}}" }
+
+### Transfer money to Bob
+# @name transfer
+POST {{base}}/api/wallet/transfers
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+Idempotency-Key: transfer-demo-0001
+
+{ "recipientUserId": "{{bobId}}", "amount": "12.5", "note": "thanks" }
+
+### My transfers
+GET {{base}}/api/wallet/transfers?page=1&pageSize=10
+
+### One transfer
+GET {{base}}/api/wallet/transfers/{{transfer.response.body.id}}
+
+### Volume per day with running total
+GET {{base}}/api/wallet/reports/volume
+
+############################################################ market
+
+### Assets with filters, sorting, paging
+GET {{base}}/api/market/assets?q=bit&category=crypto&status=active&minPrice=1&maxPrice=100000&sort=lastPrice&order=desc&page=1&pageSize=10
+
+### One asset
+GET {{base}}/api/market/assets/BTC
+
+### Candles
+GET {{base}}/api/market/assets/BTC/candles?interval=1m&limit=20
+
+### Create asset (admin)
+POST {{base}}/api/market/assets
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "symbol": "NVDA", "name": "NVIDIA", "category": "stock", "lastPrice": "900.5" }
+
+### Update asset (admin). Put a real id here
+PATCH {{base}}/api/market/assets/00000000-0000-4000-8000-0000000000aa
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "status": "halted" }
+
+### Bulk upsert (admin)
+POST {{base}}/api/market/assets/bulk
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{
+  "assets": [
+    { "symbol": "MSFT", "name": "Microsoft", "category": "stock", "lastPrice": "420.1" },
+    { "symbol": "BTC", "name": "Bitcoin", "category": "crypto", "lastPrice": "61000" }
+  ]
+}
+
+### Bulk status (admin, all or nothing)
+POST {{base}}/api/market/assets/bulk/status
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "ids": ["00000000-0000-4000-8000-0000000000aa"], "status": "halted" }
+
+### Bulk soft delete (admin)
+DELETE {{base}}/api/market/assets/bulk
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "ids": ["00000000-0000-4000-8000-0000000000aa"] }
+
+### Open a position
+# @name position
+POST {{base}}/api/market/positions
+Content-Type: application/json
+X-CSRF-Token: {{csrf}}
+
+{ "symbol": "BTC", "side": "long", "quantity": "0.5" }
+
+### Close it
+POST {{base}}/api/market/positions/{{position.response.body.id}}/close
+X-CSRF-Token: {{csrf}}
+
+### My positions
+GET {{base}}/api/market/positions?status=open&page=1&pageSize=10
+
+### Pnl per asset
+GET {{base}}/api/market/positions/summary
